@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .animate-float {
+    animation: float 4s ease-in-out infinite, tiny-breathe 2.5s ease-in-out infinite;
+  }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-7px); }
+}
+
+@keyframes tiny-breathe {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(0.97) translateY(1%); }
+}
+
+* {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+body {
+  -webkit-app-region: drag;
+}
