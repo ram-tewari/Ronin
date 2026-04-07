@@ -42,6 +42,9 @@ var (
 func main() {
 	loadConfig()
 
+	// Start the live score poller in the background
+	go StartLiveScorePoller()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/status", statusHandler)
 	mux.HandleFunc("/discovery", discoveryHandler)
@@ -78,13 +81,23 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build alerts for each selected team
+	// Build alerts for each selected team with live scores
 	var alerts []Alert
+	hasActiveGame := false
+	
 	teamCacheMu.RLock()
 	for i, id := range selected {
 		name, ok := teamCache[id]
 		if !ok {
 			name = "Team " + id
+		}
+
+		// Get live score from cache
+		liveStatus := GetLiveScore(id)
+		
+		// Check if this team has an active game
+		if IsGameActive(liveStatus) {
+			hasActiveGame = true
 		}
 
 		priority := "medium"
@@ -106,21 +119,25 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 		alerts = append(alerts, Alert{
 			TeamID:   id,
 			Team:     name,
-			Event:    "Tracking " + name,
+			Event:    liveStatus,
 			Link:     link,
 			Priority: priority,
 		})
 	}
 	teamCacheMu.RUnlock()
 
+	// State machine: elevate mood to 'alert' if any game is active
 	mood := "idle"
-	if len(alerts) > 0 {
+	message := fmt.Sprintf("Tracking %d team(s).", len(alerts))
+	
+	if hasActiveGame {
 		mood = "alert"
+		message = "Live games in progress!"
 	}
 
 	response := StatusResponse{
 		Mood:    mood,
-		Message: fmt.Sprintf("Tracking %d team(s).", len(alerts)),
+		Message: message,
 		Alerts:  alerts,
 	}
 
