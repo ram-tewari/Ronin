@@ -359,3 +359,89 @@ Examples:
 - NHL: `.../hockey/nhl/teams`
 - MLS: `.../soccer/usa.1/teams`
 - Premier League: `.../soccer/eng.1/teams`
+
+---
+
+## AI Engine (Local LLM via Ollama)
+
+Ronin uses a locally-hosted LLM through [Ollama](https://ollama.com) to power the `/query` endpoint. This replaces the previous keyword-matching logic with a full natural language understanding layer.
+
+### Dependency
+
+- **Ollama** must be installed and running locally.
+- Default endpoint: `http://localhost:11434/api/generate`
+- Required model: `llama3.1:8b` (pull with `ollama pull llama3.1:8b`)
+
+### How It Works
+
+When a user submits a query via the command bar:
+
+1. **Context Gathering**: The Go backend reads the user's `SelectedTeams` from config and the `liveScoreCache` (polled every 60s from ESPN/CricAPI). Both are injected directly into the LLM prompt so the model has real-time accuracy.
+
+2. **Prompt Construction**: A system prompt instructs the LLM to act as "Ronin" (Gaara persona). The live sports context is embedded between `=== LIVE SPORTS CONTEXT ===` markers, followed by the user's question.
+
+3. **Ollama Request**: The backend sends an HTTP POST to Ollama with:
+   ```json
+   {
+     "model": "llama3.1:8b",
+     "prompt": "<system prompt + context + user query>",
+     "stream": false,
+     "format": "json"
+   }
+   ```
+
+4. **Structured Output Parsing**: Ollama's `format: "json"` flag forces JSON output. The backend parses the LLM's response into:
+   ```json
+   {
+     "mood": "idle|alert|hyped|exhausted",
+     "message": "Ronin's response text",
+     "link": "URL to a match thread, or empty string"
+   }
+   ```
+
+5. **Validation & Fallback**: If the LLM returns malformed JSON (hallucination) or Ollama times out / crashes, the backend returns a graceful fallback response with mood `"exhausted"` and an in-character error message.
+
+### Persona: Ronin (Gaara)
+
+The LLM is instructed to behave as Gaara from Naruto:
+- Stern, intense, calm brevity. No emojis.
+- Fiercely protective of the user's focus and productivity.
+- If there are no active games or the user asks an off-topic question, Ronin will aggressively redirect them to study for ECE 270 and build the Pharos architecture.
+
+### Timeout Handling
+
+- Default timeout: **90 seconds** (configurable via `OllamaTimeout` in `query.go`).
+- If Ollama does not respond within the timeout, the backend returns a fallback response rather than hanging.
+
+### Endpoint
+
+#### `POST /query` — Ask Ronin
+
+**Request:**
+```json
+{
+  "query": "How is Purdue doing right now?"
+}
+```
+
+**Response:**
+```json
+{
+  "mood": "hyped",
+  "message": "Purdue leads by 7. The sand approves. Now get back to work.",
+  "link": "https://www.espn.com/mens-college-basketball/game/_/gameId/401596281"
+}
+```
+
+### Frontend Integration
+
+When the Go backend returns a `link` in the query response, `App.jsx` saves it in state. If the user clicks the `DialogueBubble` while a query response is active, it calls `window.ronin.openExternal(link)` to open the match thread in the default browser.
+
+### Testing
+
+`backend/query_test.go` uses `httptest` to mock the Ollama server. Test cases cover:
+- **Perfect response**: Valid JSON from the LLM is parsed and returned correctly.
+- **Hallucinated response**: Malformed JSON triggers the graceful fallback.
+- **Timeout**: Simulated Ollama crash returns a fallback within the test timeout.
+- **Invalid mood**: Unknown mood values are defaulted to `"idle"`.
+- **Request validation**: Wrong HTTP method and empty/invalid bodies are rejected.

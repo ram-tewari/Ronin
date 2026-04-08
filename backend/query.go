@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -152,6 +153,7 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, OllamaEndpoint, bytes.NewReader(body))
 	if err != nil {
+		logger.Error("Failed to create LLM request", slog.String("error", err.Error()))
 		http.Error(w, "Failed to create LLM request", http.StatusInternalServerError)
 		return
 	}
@@ -159,6 +161,9 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
+		logger.Error("Ollama request failed", 
+			slog.String("error", err.Error()),
+			slog.String("query", query))
 		// Timeout or connection refused — Ollama is down
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(QueryResponse{
@@ -171,6 +176,9 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		logger.Error("Ollama returned non-OK status",
+			slog.Int("status_code", resp.StatusCode),
+			slog.String("query", query))
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(QueryResponse{
 			Mood:    "exhausted",
@@ -183,6 +191,9 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 	// Parse Ollama's response
 	var ollamaResp OllamaResponse
 	if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
+		logger.Error("Failed to decode Ollama response", 
+			slog.String("error", err.Error()),
+			slog.String("query", query))
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(QueryResponse{
 			Mood:    "exhausted",
@@ -195,6 +206,10 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 	// Parse the LLM's JSON output into our QueryResponse
 	var queryResp QueryResponse
 	if err := json.Unmarshal([]byte(ollamaResp.Response), &queryResp); err != nil {
+		logger.Error("LLM returned malformed JSON",
+			slog.String("error", err.Error()),
+			slog.String("query", query),
+			slog.String("response", ollamaResp.Response))
 		// LLM hallucinated malformed JSON — return a graceful fallback
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(QueryResponse{
@@ -212,6 +227,10 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 	default:
 		queryResp.Mood = "idle"
 	}
+
+	logger.Info("Query processed successfully",
+		slog.String("query", query),
+		slog.String("mood", queryResp.Mood))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(queryResp)

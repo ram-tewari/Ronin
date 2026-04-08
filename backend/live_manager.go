@@ -3,7 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -78,7 +78,7 @@ func StartLiveScorePoller() {
 		}
 	}()
 	
-	log.Println("Live score poller started (60s interval)")
+	logger.Info("Live score poller started", slog.Int("interval_seconds", 60))
 }
 
 // pollLiveScores fetches live scores from ESPN and CricAPI and updates the cache
@@ -132,19 +132,19 @@ func fetchESPNScores(teamIDs []string) {
 	
 	resp, err := client.Get(url)
 	if err != nil {
-		log.Printf("ESPN scoreboard fetch failed: %v", err)
+		logger.Error("ESPN scoreboard fetch failed", slog.String("error", err.Error()))
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("ESPN scoreboard returned status %d", resp.StatusCode)
+		logger.Error("ESPN scoreboard returned non-OK status", slog.Int("status_code", resp.StatusCode))
 		return
 	}
 
 	var scoreboard espnScoreboardResponse
 	if err := json.NewDecoder(resp.Body).Decode(&scoreboard); err != nil {
-		log.Printf("Failed to parse ESPN scoreboard: %v", err)
+		logger.Error("Failed to parse ESPN scoreboard", slog.String("error", err.Error()))
 		return
 	}
 
@@ -198,20 +198,27 @@ func fetchESPNScores(teamIDs []string) {
 
 	// Update cache for tracked teams
 	liveScoreCacheMu.Lock()
+	updatedCount := 0
 	for _, teamID := range teamIDs {
 		if status, found := teamStatusMap[teamID]; found {
 			liveScoreCache[teamID] = status
+			updatedCount++
 		} else {
 			liveScoreCache[teamID] = "No game today"
 		}
 	}
 	liveScoreCacheMu.Unlock()
+	
+	logger.Info("ESPN scores updated", 
+		slog.Int("teams_tracked", len(teamIDs)),
+		slog.Int("games_found", updatedCount))
 }
 
 // fetchCricketScores polls the CricAPI for live cricket matches
 func fetchCricketScores(teamIDs []string) {
 	apiKey := loadEnvKey("CRICKET_API_KEY")
 	if apiKey == "" {
+		logger.Warn("Cricket API key not found, skipping cricket score fetch")
 		// Set fallback status for all cricket teams
 		liveScoreCacheMu.Lock()
 		for _, teamID := range teamIDs {
@@ -227,19 +234,19 @@ func fetchCricketScores(teamIDs []string) {
 	
 	resp, err := client.Get(url)
 	if err != nil {
-		log.Printf("CricAPI fetch failed: %v", err)
+		logger.Error("CricAPI fetch failed", slog.String("error", err.Error()))
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("CricAPI returned status %d", resp.StatusCode)
+		logger.Error("CricAPI returned non-OK status", slog.Int("status_code", resp.StatusCode))
 		return
 	}
 
 	var cricResp cricapiCurrentMatchesResponse
 	if err := json.NewDecoder(resp.Body).Decode(&cricResp); err != nil {
-		log.Printf("Failed to parse CricAPI response: %v", err)
+		logger.Error("Failed to parse CricAPI response", slog.String("error", err.Error()))
 		return
 	}
 
@@ -262,6 +269,7 @@ func fetchCricketScores(teamIDs []string) {
 
 	// Update cache for tracked teams
 	liveScoreCacheMu.Lock()
+	updatedCount := 0
 	for _, teamID := range teamIDs {
 		// Extract team name from ID (remove "intl_" or "t20_" prefix)
 		teamName := strings.TrimPrefix(teamID, "intl_")
@@ -276,6 +284,7 @@ func fetchCricketScores(teamIDs []string) {
 			   strings.Contains(strings.ToLower(apiTeamName), strings.ToLower(teamName)) {
 				liveScoreCache[teamID] = status
 				found = true
+				updatedCount++
 				break
 			}
 		}
@@ -285,6 +294,10 @@ func fetchCricketScores(teamIDs []string) {
 		}
 	}
 	liveScoreCacheMu.Unlock()
+	
+	logger.Info("Cricket scores updated",
+		slog.Int("teams_tracked", len(teamIDs)),
+		slog.Int("games_found", updatedCount))
 }
 
 // GetLiveScore retrieves the cached live score for a team ID

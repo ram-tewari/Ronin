@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"sort"
@@ -104,16 +105,19 @@ func fetchLiveCricketTeams(apiKey string) ([]DiscoveryTeam, []DiscoveryTeam, err
 
 	resp, err := client.Get(url)
 	if err != nil {
+		logger.Error("CricAPI request failed", slog.String("error", err.Error()))
 		return nil, nil, fmt.Errorf("CricAPI request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		logger.Error("CricAPI returned non-OK status", slog.Int("status_code", resp.StatusCode))
 		return nil, nil, fmt.Errorf("CricAPI returned status %d", resp.StatusCode)
 	}
 
 	var apiResp cricapiResponse
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		logger.Error("Failed to parse CricAPI response", slog.String("error", err.Error()))
 		return nil, nil, fmt.Errorf("failed to parse CricAPI response: %w", err)
 	}
 
@@ -168,10 +172,16 @@ func fetchLiveCricketTeams(apiKey string) ([]DiscoveryTeam, []DiscoveryTeam, err
 	sort.Slice(intlTeams, func(i, j int) bool { return intlTeams[i].Name < intlTeams[j].Name })
 	sort.Slice(t20Teams, func(i, j int) bool { return t20Teams[i].Name < t20Teams[j].Name })
 
+	logger.Info("Cricket teams fetched from API",
+		slog.Int("intl_teams", len(intlTeams)),
+		slog.Int("t20_teams", len(t20Teams)))
+
 	return intlTeams, t20Teams, nil
 }
 
 func getMockedCricketTeams() ([]DiscoveryTeam, []DiscoveryTeam, error) {
+	logger.Info("Using mocked cricket teams (no API key found)")
+	
 	intlTeams := []DiscoveryTeam{
 		{ID: "intl_afghanistan", Name: "Afghanistan"},
 		{ID: "intl_australia", Name: "Australia"},

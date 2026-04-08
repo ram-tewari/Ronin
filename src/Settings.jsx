@@ -1,5 +1,24 @@
 import React, { useState, useEffect, useMemo } from 'react';
 
+// Telemetry utility to send logs to backend
+async function sendTelemetry(level, message, details = {}) {
+  try {
+    await fetch('http://localhost:8080/log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        level,
+        source: 'frontend',
+        message,
+        details
+      })
+    });
+  } catch (err) {
+    // Silently fail if backend is unreachable
+    console.error('Telemetry failed:', err);
+  }
+}
+
 // Sport card config — emoji icons, colors, descriptions
 const SPORT_META = {
   ncaa_mbb: {
@@ -83,9 +102,15 @@ export default function Settings() {
       .then(data => {
         setSports(data.sports || []);
         setDiscoveryLoading(false);
+        sendTelemetry('info', 'Discovery data loaded successfully', {
+          sports_count: data.sports?.length || 0
+        });
       })
       .catch(err => {
-        console.error('Discovery fetch failed:', err);
+        sendTelemetry('error', 'Discovery fetch failed', {
+          error: err.message,
+          stack: err.stack
+        });
         setDiscoveryError(err.message);
         setDiscoveryLoading(false);
       });
@@ -157,8 +182,15 @@ export default function Settings() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ selectedTeams: config.data.selectedTeams })
       });
+      
+      sendTelemetry('info', 'Config synced to backend', {
+        selected_teams_count: config.data.selectedTeams.length
+      });
     } catch (err) {
-      console.error('Failed to sync config to backend:', err);
+      sendTelemetry('error', 'Failed to sync config to backend', {
+        error: err.message,
+        stack: err.stack
+      });
     }
   };
 

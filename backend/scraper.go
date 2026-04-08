@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"time"
@@ -65,16 +66,25 @@ func FetchNCAAMBBTeams() ([]DiscoveryTeam, error) {
 
 		resp, err := client.Get(url)
 		if err != nil {
+			logger.Error("ESPN API request failed", 
+				slog.String("error", err.Error()),
+				slog.Int("page", page))
 			return nil, fmt.Errorf("ESPN API request failed: %w", err)
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
+			logger.Error("ESPN API returned non-OK status",
+				slog.Int("status_code", resp.StatusCode),
+				slog.Int("page", page))
 			return nil, fmt.Errorf("ESPN API returned status %d", resp.StatusCode)
 		}
 
 		var espnResp espnTeamsResponse
 		if err := json.NewDecoder(resp.Body).Decode(&espnResp); err != nil {
+			logger.Error("Failed to parse ESPN response",
+				slog.String("error", err.Error()),
+				slog.Int("page", page))
 			return nil, fmt.Errorf("failed to parse ESPN response: %w", err)
 		}
 
@@ -100,6 +110,8 @@ func FetchNCAAMBBTeams() ([]DiscoveryTeam, error) {
 	sort.Slice(allTeams, func(i, j int) bool {
 		return allTeams[i].Name < allTeams[j].Name
 	})
+
+	logger.Info("NCAA teams fetched successfully", slog.Int("team_count", len(allTeams)))
 
 	return allTeams, nil
 }

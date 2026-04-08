@@ -2,6 +2,25 @@ import React, { useState, useEffect, useCallback } from 'react';
 import ChibiEngine from './ChibiEngine';
 import CommandBar from './CommandBar';
 
+// Telemetry utility to send logs to backend
+async function sendTelemetry(level, message, details = {}) {
+  try {
+    await fetch('http://localhost:8080/log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        level,
+        source: 'frontend',
+        message,
+        details
+      })
+    });
+  } catch (err) {
+    // Silently fail if backend is unreachable
+    console.error('Telemetry failed:', err);
+  }
+}
+
 const BUBBLE_STYLE = {
   idle:      { border: '#1a5fa8', bg: '#080f20', text: '#90beff', glow: '#1a5fa844' },
   alert:     { border: '#cc1800', bg: '#1a0500', text: '#ff9070', glow: '#cc180044' },
@@ -85,6 +104,7 @@ export default function App() {
   const [alerts, setAlerts] = useState([]);
   const [config, setConfig] = useState(null);
   const [commandBarVisible, setCommandBarVisible] = useState(false);
+  const [queryLink, setQueryLink] = useState(null);
 
   useEffect(() => {
     // Load config on mount
@@ -106,7 +126,12 @@ export default function App() {
     const fetchStatus = async () => {
       try {
         const response = await fetch('http://localhost:8080/status');
-        if (!response.ok) return;
+        if (!response.ok) {
+          sendTelemetry('warn', 'Status endpoint returned non-OK', { 
+            status: response.status 
+          });
+          return;
+        }
         const data = await response.json();
 
         // Alerts are already filtered server-side by selected teams
@@ -132,7 +157,10 @@ export default function App() {
           setBubbleVisible(false);
         }
       } catch (err) {
-        console.error('Failed to fetch from brain:', err);
+        sendTelemetry('error', 'Failed to fetch status from backend', {
+          error: err.message,
+          stack: err.stack
+        });
       }
     };
 
@@ -146,8 +174,12 @@ export default function App() {
   }, [message]);
 
   function handleBubbleClick() {
-    if (alerts && alerts.length > 0 && alerts[0].link) {
-      // Safely call the secure IPC bridge
+    // Priority: query link (from LLM response) > alert link (from status polling)
+    if (queryLink) {
+      if (window.ronin && window.ronin.openExternal) {
+        window.ronin.openExternal(queryLink);
+      }
+    } else if (alerts && alerts.length > 0 && alerts[0].link) {
       if (window.ronin && window.ronin.openExternal) {
         window.ronin.openExternal(alerts[0].link);
       }
@@ -179,14 +211,21 @@ export default function App() {
       if (response && response.mood && response.message) {
         setMood(response.mood);
         setMessage(response.message);
+        setQueryLink(response.link || null);
         setBubbleVisible(true);
 
         setTimeout(() => {
           setBubbleVisible(false);
+          setQueryLink(null);
         }, 8000);
       }
     } catch (err) {
-      console.error('Query failed:', err);
+      sendTelemetry('error', 'Query submission failed', {
+        error: err.message,
+        stack: err.stack,
+        query: query
+      });
+      
       setMood('exhausted');
       setMessage('Backend is unreachable. Try again.');
       setBubbleVisible(true);

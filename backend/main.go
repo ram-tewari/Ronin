@@ -3,7 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"sync"
@@ -40,6 +40,11 @@ var (
 )
 
 func main() {
+	// Initialize structured logger
+	if err := InitLogger(); err != nil {
+		panic(fmt.Sprintf("Failed to initialize logger: %v", err))
+	}
+
 	loadConfig()
 
 	// Start the live score poller in the background
@@ -50,12 +55,14 @@ func main() {
 	mux.HandleFunc("/discovery", discoveryHandler)
 	mux.HandleFunc("/config", configHandler)
 	mux.HandleFunc("/query", queryHandler)
+	mux.HandleFunc("/log", logHandler)
 
 	handler := corsMiddleware(mux)
 
-	log.Println("Starting Ronin brain on http://localhost:8080...")
+	logger.Info("Starting Ronin brain", slog.String("address", "http://localhost:8080"))
 	if err := http.ListenAndServe(":8080", handler); err != nil {
-		log.Fatalf("Server failed: %v", err)
+		logger.Error("Server failed", slog.String("error", err.Error()))
+		os.Exit(1)
 	}
 }
 
@@ -179,10 +186,10 @@ func discoveryHandler(w http.ResponseWriter, r *http.Request) {
 	cricket := <-cricketCh
 
 	if ncaa.err != nil {
-		log.Printf("NCAA discovery error: %v", ncaa.err)
+		logger.Error("NCAA discovery error", slog.String("error", ncaa.err.Error()))
 	}
 	if cricket.err != nil {
-		log.Printf("Cricket discovery error: %v", cricket.err)
+		logger.Error("Cricket discovery error", slog.String("error", cricket.err.Error()))
 	}
 
 	// If both failed, return an error
@@ -272,13 +279,13 @@ func configHandler(w http.ResponseWriter, r *http.Request) {
 func loadConfig() {
 	data, err := os.ReadFile(configFileName)
 	if err != nil {
-		log.Printf("No existing config found, starting fresh: %v", err)
+		logger.Info("No existing config found, starting fresh", slog.String("error", err.Error()))
 		appConfig = AppConfig{SelectedTeams: []string{}}
 		return
 	}
 
 	if err := json.Unmarshal(data, &appConfig); err != nil {
-		log.Printf("Failed to parse config, starting fresh: %v", err)
+		logger.Error("Failed to parse config, starting fresh", slog.String("error", err.Error()))
 		appConfig = AppConfig{SelectedTeams: []string{}}
 		return
 	}
@@ -287,7 +294,7 @@ func loadConfig() {
 		appConfig.SelectedTeams = []string{}
 	}
 
-	log.Printf("Loaded config with %d selected teams", len(appConfig.SelectedTeams))
+	logger.Info("Loaded config", slog.Int("selected_teams", len(appConfig.SelectedTeams)))
 }
 
 // saveConfig writes the current config to disk
@@ -297,12 +304,14 @@ func saveConfig() {
 	configMu.RUnlock()
 
 	if err != nil {
-		log.Printf("Failed to marshal config: %v", err)
+		logger.Error("Failed to marshal config", slog.String("error", err.Error()))
 		return
 	}
 
 	if err := os.WriteFile(configFileName, data, 0644); err != nil {
-		log.Printf("Failed to write config: %v", err)
+		logger.Error("Failed to write config", slog.String("error", err.Error()))
+	} else {
+		logger.Info("Config saved", slog.Int("selected_teams", len(appConfig.SelectedTeams)))
 	}
 }
 
